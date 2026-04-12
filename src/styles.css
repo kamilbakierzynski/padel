@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --surface: #f7f3e6;
+  --surface-strong: #ebe3c8;
+  --sand: #f5dca5;
+  --sand-strong: #d8b469;
+  --accent: #f97316;
+  --sun: #ffb703;
+  --court: #0f8b8d;
+  --court-dark: #0c5e61;
+  --sky: #83c5be;
+  --lime: #c7f464;
+  --ink: #072a2d;
+  --muted: #496468;
+  --font-display: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  --font-body: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+html {
+  min-height: 100%;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0)),
+    linear-gradient(135deg, #fffaf0, #f7f3e6 52%, #f2e8c9);
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-body);
+  background:
+    radial-gradient(circle at top left, rgba(255, 183, 3, 0.16), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(15, 139, 141, 0.12), transparent 28%),
+    var(--surface);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@theme {
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-[2rem] border border-white/70 bg-white/70 p-5 shadow-[0_20px_50px_rgba(7,42,45,0.08)] backdrop-blur md:p-6;
+  }
+
+  .eyebrow {
+    @apply text-xs font-black uppercase tracking-[0.22em] text-[var(--muted)];
+  }
+
+  .primary-action {
+    @apply inline-flex items-center gap-2 rounded-full bg-[linear-gradient(135deg,var(--accent),var(--sun))] px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-[var(--ink)] shadow-[0_14px_30px_rgba(249,115,22,0.25)] transition hover:-translate-y-0.5;
+  }
+
+  .secondary-action {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/75 px-5 py-3 text-sm font-bold text-[var(--ink)] transition hover:bg-white;
+  }
+
+  .touch-button {
+    @apply min-h-14 rounded-[1.2rem] bg-[var(--surface-strong)] px-4 py-3 font-black text-[var(--ink)] transition hover:bg-[var(--sand)];
+  }
+
+  .text-input {
+    @apply w-full rounded-[1.2rem] border border-white/70 bg-white px-4 py-3 text-[var(--ink)] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] outline-none transition focus:border-[var(--court)] focus:ring-4 focus:ring-[var(--court)]/15;
+  }
+
+  .text-area {
+    @apply min-h-48 w-full rounded-[1.2rem] border border-white/70 bg-white px-4 py-3 text-[var(--ink)] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] outline-none transition focus:border-[var(--court)] focus:ring-4 focus:ring-[var(--court)]/15;
+  }
+
+  .form-label {
+    @apply text-sm font-black uppercase tracking-[0.16em] text-[var(--ink)];
+  }
+
+  .tournament-card {
+    @apply rounded-[1.9rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(246,244,237,0.92))] p-5 shadow-[0_18px_40px_rgba(7,42,45,0.08)] transition hover:-translate-y-0.5;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --font-display: "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  }
+}
