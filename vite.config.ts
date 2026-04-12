@@ -9,7 +9,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['padel-icon.svg'],
+      includeAssets: ['padel-icon.svg', 'pwa-192.png', 'pwa-512.png'],
       manifest: {
         name: 'Padel Parade',
         short_name: 'Padel Parade',
@@ -21,10 +21,22 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
+            src: 'pwa-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: 'pwa-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
             src: 'padel-icon.svg',
             sizes: 'any',
             type: 'image/svg+xml',
-            purpose: 'any maskable'
+            purpose: 'any'
           }
         ]
       }
