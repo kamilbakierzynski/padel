@@ -1,132 +1,115 @@
 import { Link } from 'react-router-dom'
 
-import { getLeaderLabel } from '../domain/engine'
+import { computeStandings } from '../domain/engine'
+import type { Tournament } from '../domain/types'
 import { useTournamentStore } from '../state/TournamentStore'
 
 export function DashboardPage() {
   const { tournaments } = useTournamentStore()
+  const activeTournament = tournaments
+    .filter((t) => t.status === 'active')
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+  const pastTournaments = tournaments.filter((t) => t.status === 'completed')
+
+  if (tournaments.length === 0) return <EmptyState />
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-      <section className="panel relative overflow-hidden">
-        <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle_at_center,_rgba(255,183,3,0.35),_transparent_65%)] lg:block" />
-        <div className="relative max-w-2xl">
-          <p className="eyebrow">Club control room</p>
-          <h1 className="mt-3 max-w-xl font-display text-5xl leading-[0.92] text-[var(--ink)] sm:text-6xl">
-            Run bright, touch-first padel nights on one iPad.
-          </h1>
-          <p className="mt-4 max-w-xl text-lg text-[var(--muted)]">
-            Americano stays fair and deterministic. Mexicano reshuffles from live standings. Every tournament
-            lives locally, resumes instantly, and works without a backend.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link className="primary-action" to="/new">
-              Create tournament
-            </Link>
-            <a className="secondary-action" href="#active-tournaments">
-              Jump to active boards
-            </a>
+    <div className="flex h-full flex-col">
+      {activeTournament && <HeroCard tournament={activeTournament} />}
+      {pastTournaments.length > 0 && (
+        <section className="mt-3">
+          <p className="label mb-2">Past</p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {pastTournaments.map((t) => (
+              <PastChip key={t.id} tournament={t} />
+            ))}
           </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function EmptyState() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center text-center">
+      <div className="text-5xl mb-4">🎾</div>
+      <h1 className="display-xl text-4xl">Let's Play</h1>
+      <p className="mt-2 text-sm text-[var(--text-muted)] max-w-xs">
+        Create your first tournament
+      </p>
+      <Link className="btn-primary mt-6" to="/new">New Tournament</Link>
+    </div>
+  )
+}
+
+function HeroCard({ tournament }: { tournament: Tournament }) {
+  const standings = computeStandings(tournament)
+  const top3 = standings.slice(0, 3)
+  const totalRounds = tournament.rounds.length
+
+  return (
+    <Link
+      className="group relative flex-1 flex flex-col overflow-hidden rounded-[var(--radius-lg)] bg-[var(--surface-1)] border border-white/6 transition-all active:scale-[0.995]"
+      to={`/tournament/${tournament.id}`}
+    >
+      {/* Subtle gradient overlay */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[var(--electric)]/5 via-transparent to-transparent pointer-events-none" />
+
+      <div className="relative flex-1 flex flex-col p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="h-2 w-2 rounded-full bg-[var(--electric)]" />
+          <span className="label">Round {totalRounds} · {tournament.mode}</span>
         </div>
-        <div className="relative mt-8 grid gap-4 sm:grid-cols-3">
-          <MetricCard label="Saved boards" value={String(tournaments.length)} />
-          <MetricCard
-            label="Active now"
-            value={String(tournaments.filter((tournament) => tournament.status === 'active').length)}
-          />
-          <MetricCard
-            label="Modes"
-            value={tournaments.some((tournament) => tournament.mode === 'mexicano') ? '2 live' : 'Americano'}
-          />
-        </div>
-      </section>
-      <section className="panel bg-[linear-gradient(180deg,rgba(15,139,141,0.9),rgba(7,42,45,0.96))] text-white">
-        <p className="eyebrow text-white/65">Why this build</p>
-        <h2 className="mt-3 font-display text-4xl leading-none">Local-first by design.</h2>
-        <ul className="mt-6 grid gap-3 text-sm text-white/80">
-          <li className="rounded-[1.4rem] border border-white/15 bg-white/10 p-4">
-            Route-based UI for dashboard, creation, and live boards.
-          </li>
-          <li className="rounded-[1.4rem] border border-white/15 bg-white/10 p-4">
-            Pure tournament engine keeps Americano and Mexicano rules out of the view layer.
-          </li>
-          <li className="rounded-[1.4rem] border border-white/15 bg-white/10 p-4">
-            Local storage persistence and PWA support make Safari resume fast on iPad.
-          </li>
-        </ul>
-      </section>
-      <section className="lg:col-span-2">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="eyebrow">Saved tournaments</p>
-            <h2 className="mt-2 text-3xl font-display text-[var(--ink)]" id="active-tournaments">
-              Organizer boards
-            </h2>
-          </div>
-        </div>
-        {tournaments.length === 0 ? (
-          <div className="panel grid place-items-center text-center">
-            <div className="max-w-md">
-              <p className="eyebrow">Fresh court</p>
-              <h3 className="mt-3 text-3xl font-display text-[var(--ink)]">No tournaments saved yet.</h3>
-              <p className="mt-3 text-[var(--muted)]">
-                Create the first board to generate round one immediately and keep running scores locally.
-              </p>
-              <Link className="primary-action mt-6 inline-flex" to="/new">
-                Start a new board
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {tournaments.map((tournament) => (
-              <Link className="tournament-card" key={tournament.id} to={`/tournament/${tournament.id}`}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="eyebrow">{tournament.mode}</p>
-                    <h3 className="mt-2 text-2xl font-display text-[var(--ink)]">{tournament.name}</h3>
-                  </div>
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] ${
-                      tournament.status === 'active'
-                        ? 'bg-[var(--lime)]/35 text-[var(--ink)]'
-                        : 'bg-[var(--surface-strong)] text-[var(--muted)]'
-                    }`}
-                  >
-                    {tournament.status}
-                  </span>
+        <h1 className="display-xl text-3xl sm:text-4xl">{tournament.name}</h1>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">
+          {tournament.players.length} players · {tournament.courts} courts
+        </p>
+
+        {/* Mini standings as horizontal bars */}
+        {top3.length > 0 && (
+          <div className="mt-auto pt-4 grid gap-1.5">
+            {top3.map((s, i) => (
+              <div key={s.playerId} className="flex items-center gap-2">
+                <span className="w-5 text-sm text-center">{i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'}</span>
+                <span className="text-xs font-medium w-16 truncate">{s.name}</span>
+                <div className="flex-1 h-1 rounded-full bg-white/5 overflow-hidden">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${top3[0].totalPoints > 0 ? (s.totalPoints / top3[0].totalPoints) * 100 : 0}%`,
+                      background: i === 0 ? 'var(--electric)' : 'var(--surface-3)',
+                    }}
+                  />
                 </div>
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <StatPill label="Players" value={String(tournament.players.length)} />
-                  <StatPill label="Courts" value={String(tournament.courts)} />
-                  <StatPill label="Rounds" value={String(tournament.rounds.length)} />
-                </div>
-                <div className="mt-5 rounded-[1.4rem] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--muted)]">
-                  Leader: <span className="font-semibold text-[var(--ink)]">{getLeaderLabel(tournament)}</span>
-                </div>
-              </Link>
+                <span className="score-num text-xs text-[var(--text-muted)] w-8 text-right">{s.totalPoints}</span>
+              </div>
             ))}
           </div>
         )}
-      </section>
-    </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-white/4 px-5 py-2.5">
+        <span className="text-xs text-[var(--text-muted)]">Tap to continue</span>
+        <span className="display text-xs text-[var(--electric)]">Continue →</span>
+      </div>
+    </Link>
   )
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.6rem] border border-white/80 bg-white/75 p-4 shadow-[0_14px_30px_rgba(7,42,45,0.06)]">
-      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">{label}</p>
-      <p className="mt-3 text-3xl font-black text-[var(--ink)]">{value}</p>
-    </div>
-  )
-}
+function PastChip({ tournament }: { tournament: Tournament }) {
+  const standings = computeStandings(tournament)
+  const winner = standings[0]
 
-function StatPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[1.2rem] bg-white/75 px-3 py-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">{label}</p>
-      <p className="mt-2 text-xl font-black text-[var(--ink)]">{value}</p>
-    </div>
+    <Link
+      className="flex-shrink-0 rounded-[var(--radius-md)] bg-[var(--surface-1)] border border-white/4 px-3 py-2 transition-all active:scale-[0.97]"
+      to={`/tournament/${tournament.id}`}
+    >
+      <p className="display text-xs">{tournament.name}</p>
+      <p className="text-[0.65rem] text-[var(--text-muted)] mt-0.5">
+        🏆 {winner?.name ?? '–'} · {tournament.rounds.length}R
+      </p>
+    </Link>
   )
 }

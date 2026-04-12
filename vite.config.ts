@@ -13,9 +13,9 @@ export default defineConfig({
       manifest: {
         name: 'Padel Parade',
         short_name: 'Padel Parade',
-        description: 'A colorful Americano and Mexicano padel tournament board for iPad.',
-        theme_color: '#f97316',
-        background_color: '#fff7d6',
+        description: 'A sporty Americano and Mexicano padel tournament board for iPad.',
+        theme_color: '#141210',
+        background_color: '#141210',
         display: 'standalone',
         orientation: 'landscape',
         start_url: '/',

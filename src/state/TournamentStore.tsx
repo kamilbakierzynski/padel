@@ -4,6 +4,7 @@ import {
   appendNextRound,
   createTournament as createTournamentRecord,
   finishTournament as finishTournamentRecord,
+  reopenTournament as reopenTournamentRecord,
   updateMatchScore,
 } from '../domain/engine'
 import { createLocalTournamentRepository, subscribeToTournamentStorage } from '../domain/repository'
@@ -27,6 +28,7 @@ interface TournamentStoreValue {
   }) => { droppedFutureRounds: number }
   generateNextRound: (tournamentId: string) => Tournament | undefined
   finishTournament: (tournamentId: string) => Tournament | undefined
+  reopenTournament: (tournamentId: string) => Tournament | undefined
 }
 
 const TournamentStoreContext = createContext<TournamentStoreValue | null>(null)
@@ -82,6 +84,17 @@ export function TournamentStoreProvider({ children }: PropsWithChildren) {
       }
 
       const nextTournament = finishTournamentRecord(currentTournament)
+      persist(tournaments.map((tournament) => (tournament.id === tournamentId ? nextTournament : tournament)))
+      return nextTournament
+    },
+    reopenTournament(tournamentId) {
+      const currentTournament = tournaments.find((tournament) => tournament.id === tournamentId)
+
+      if (!currentTournament) {
+        return undefined
+      }
+
+      const nextTournament = reopenTournamentRecord(currentTournament)
       persist(tournaments.map((tournament) => (tournament.id === tournamentId ? nextTournament : tournament)))
       return nextTournament
     },

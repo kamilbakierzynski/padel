@@ -158,6 +158,73 @@ export function finishTournament(tournament: Tournament): Tournament {
   }
 }
 
+export function reopenTournament(tournament: Tournament): Tournament {
+  if (tournament.status !== 'completed') {
+    return tournament
+  }
+
+  return {
+    ...tournament,
+    status: 'active',
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export interface HeadToHeadGrid {
+  /** Same order as `tournament.players`. */
+  players: Player[]
+  /**
+   * `wins[row][col]` counts how many times the row player beat the column player
+   * when they met as opponents (opposite teams in a doubles match).
+   */
+  wins: number[][]
+}
+
+export function computeHeadToHead(tournament: Tournament): HeadToHeadGrid {
+  const players = tournament.players
+  const n = players.length
+  const indexById = new Map(players.map((player, index) => [player.id, index]))
+  const wins: number[][] = Array.from({ length: n }, () => Array.from({ length: n }, () => 0))
+
+  for (const round of tournament.rounds) {
+    for (const match of round.matches) {
+      if (match.scoreA === null || match.scoreB === null) {
+        continue
+      }
+
+      if (match.scoreA === match.scoreB) {
+        continue
+      }
+
+      const teamAWins = match.scoreA > match.scoreB
+
+      for (const a of match.teamAPlayerIds) {
+        const ia = indexById.get(a)
+
+        if (ia === undefined) {
+          continue
+        }
+
+        for (const b of match.teamBPlayerIds) {
+          const ib = indexById.get(b)
+
+          if (ib === undefined) {
+            continue
+          }
+
+          if (teamAWins) {
+            wins[ia][ib] += 1
+          } else {
+            wins[ib][ia] += 1
+          }
+        }
+      }
+    }
+  }
+
+  return { players, wins }
+}
+
 export function computeStandings(tournament: Tournament): Standing[] {
   const statsByPlayer = new Map<string, PlayerStats>()
 
