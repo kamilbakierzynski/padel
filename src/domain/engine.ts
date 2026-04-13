@@ -1,4 +1,4 @@
-import type { Match, Player, Round, Standing, Tournament, TournamentMode } from './types'
+import type { Match, MexicanoVariant, Player, Round, Standing, Tournament, TournamentMode } from './types'
 
 export const POINTS_PER_MATCH = 21
 
@@ -27,6 +27,8 @@ interface CreateTournamentInput {
   mode: TournamentMode
   courts: number
   playerNames: string[]
+  mexicanoVariant?: MexicanoVariant
+  minRoundsBeforeReseeding?: number
 }
 
 interface UpdateResult {
@@ -39,6 +41,8 @@ export function createTournament({
   mode,
   courts,
   playerNames,
+  mexicanoVariant = 'global-standings',
+  minRoundsBeforeReseeding = 0,
 }: CreateTournamentInput): Tournament {
   const trimmedNames = playerNames.map((playerName) => playerName.trim()).filter(Boolean)
   const players = trimmedNames.map((playerName, index) => ({
@@ -60,6 +64,8 @@ export function createTournament({
     createdAt: now,
     updatedAt: now,
     seed,
+    mexicanoVariant,
+    minRoundsBeforeReseeding,
   }
 
   return appendNextRound(tournament)
@@ -259,6 +265,12 @@ export function computeStandings(tournament: Tournament): Standing[] {
     }
   }
 
+  // Precompute a stable randomised order for tie-breaking (avoids always favouring
+  // early-registered players when all other criteria are equal).
+  const tieBreakOrder = new Map(
+    seededShuffle(tournament.players, tournament.seed).map((player, index) => [player.id, index]),
+  )
+
   return tournament.players
     .map((player) => {
       const stats = statsByPlayer.get(player.id)
@@ -282,6 +294,10 @@ export function computeStandings(tournament: Tournament): Standing[] {
       }
     })
     .sort((left, right) => {
+      if (right.wins !== left.wins) {
+        return right.wins - left.wins
+      }
+
       if (right.totalPoints !== left.totalPoints) {
         return right.totalPoints - left.totalPoints
       }
@@ -294,7 +310,7 @@ export function computeStandings(tournament: Tournament): Standing[] {
         return right.played - left.played
       }
 
-      return left.seed - right.seed
+      return (tieBreakOrder.get(left.playerId) ?? 0) - (tieBreakOrder.get(right.playerId) ?? 0)
     })
     .map((standing, index) => ({
       ...standing,
@@ -364,12 +380,11 @@ function generateMexicanoRound(tournament: Tournament) {
   const roundNumber = tournament.rounds.length + 1
   const activeSlots = tournament.courts * 4
   const byePlayerIds = selectByePlayerIds(tournament, activeSlots, true)
-  const standings = computeStandings(tournament)
-  const playerById = new Map(tournament.players.map((player) => [player.id, player]))
   const history = buildMatchHistory(tournament.rounds)
 
   let activePlayers: Player[]
   let source: Round['source']
+  let useFindBestPairingWithinGroups = false
 
   if (tournament.rounds.length === 0) {
     activePlayers = seededShuffle(tournament.players, tournament.seed).filter(
@@ -377,13 +392,39 @@ function generateMexicanoRound(tournament: Tournament) {
     )
     source = 'randomized'
   } else {
-    activePlayers = standings
-      .map((standing) => playerById.get(standing.playerId))
-      .filter((player): player is Player => player !== undefined)
-      .filter((player) => !byePlayerIds.includes(player.id))
+    const standings = computeStandings(tournament)
+    const playerById = new Map(tournament.players.map((player) => [player.id, player]))
+    const variant = tournament.mexicanoVariant ?? 'global-standings'
 
-    activePlayers = smoothMexicanoQuartets(activePlayers, history)
-    source = 'standings'
+    if (variant === 'court-locked') {
+      activePlayers = buildCourtLockedOrder(tournament, standings, byePlayerIds, playerById)
+      source = 'court-locked'
+      useFindBestPairingWithinGroups = true
+    } else if (variant === 'promotion-relegation') {
+      activePlayers = buildPromotionRelegationOrder(tournament, standings, byePlayerIds, playerById)
+      source = 'promotion-relegation'
+      useFindBestPairingWithinGroups = true
+    } else {
+      // global-standings
+      const minRounds = tournament.minRoundsBeforeReseeding ?? 0
+      const useSeededOrder = tournament.rounds.length <= minRounds
+
+      if (useSeededOrder) {
+        activePlayers = [...tournament.players]
+          .filter((player) => !byePlayerIds.includes(player.id))
+          .sort((a, b) => a.seed - b.seed)
+        activePlayers = smoothMexicanoQuartets(activePlayers, history)
+        source = 'seeded'
+      } else {
+        activePlayers = standings
+          .map((standing) => playerById.get(standing.playerId))
+          .filter((player): player is Player => player !== undefined)
+          .filter((player) => !byePlayerIds.includes(player.id))
+
+        activePlayers = smoothMexicanoQuartets(activePlayers, history)
+        source = 'standings'
+      }
+    }
   }
 
   const blueprints: MatchBlueprint[] = []
@@ -395,10 +436,14 @@ function generateMexicanoRound(tournament: Tournament) {
       break
     }
 
-    blueprints.push({
-      teamA: [quartet[0], quartet[3]],
-      teamB: [quartet[1], quartet[2]],
-    })
+    if (useFindBestPairingWithinGroups) {
+      blueprints.push(findBestPairing(quartet, history).match)
+    } else {
+      blueprints.push({
+        teamA: [quartet[0], quartet[3]],
+        teamB: [quartet[1], quartet[2]],
+      })
+    }
   }
 
   return createRound(roundNumber, byePlayerIds, blueprints, source)
@@ -569,7 +614,7 @@ function smoothMexicanoQuartets(players: Player[], history: MatchHistory) {
     let bestCost = currentCost
     let bestSwapIndex = -1
 
-    for (let candidateIndex = index + 4; candidateIndex < Math.min(index + 8, nextOrder.length); candidateIndex += 1) {
+    for (let candidateIndex = index + 4; candidateIndex < Math.min(index + 5, nextOrder.length); candidateIndex += 1) {
       const swapped = [...nextOrder]
       const previousPlayer = swapped[index + 3]
       swapped[index + 3] = swapped[candidateIndex]
@@ -607,6 +652,119 @@ function getQuartetCost(quartet: Player[], history: MatchHistory) {
     },
     history,
   )
+}
+
+function buildCourtLockedOrder(
+  tournament: Tournament,
+  standings: Standing[],
+  byePlayerIds: string[],
+  playerById: Map<string, Player>,
+): Player[] {
+  // Determine each player's home court from the very first round.
+  // Players who had a bye in round 1 are assigned by seed position.
+  const homeCourtByPlayer = new Map<string, number>()
+  const firstRound = tournament.rounds[0]
+
+  for (const match of firstRound.matches) {
+    for (const playerId of [...match.teamAPlayerIds, ...match.teamBPlayerIds]) {
+      homeCourtByPlayer.set(playerId, match.court)
+    }
+  }
+
+  for (const player of tournament.players) {
+    if (!homeCourtByPlayer.has(player.id)) {
+      homeCourtByPlayer.set(player.id, Math.floor((player.seed - 1) / 4) + 1)
+    }
+  }
+
+  const standingsRankById = new Map(standings.map((s, i) => [s.playerId, i]))
+
+  return standings
+    .map((standing) => playerById.get(standing.playerId))
+    .filter((player): player is Player => player !== undefined)
+    .filter((player) => !byePlayerIds.includes(player.id))
+    .sort((a, b) => {
+      const courtA = homeCourtByPlayer.get(a.id) ?? 999
+      const courtB = homeCourtByPlayer.get(b.id) ?? 999
+
+      if (courtA !== courtB) {
+        return courtA - courtB
+      }
+
+      return (standingsRankById.get(a.id) ?? 0) - (standingsRankById.get(b.id) ?? 0)
+    })
+}
+
+function buildPromotionRelegationOrder(
+  tournament: Tournament,
+  standings: Standing[],
+  byePlayerIds: string[],
+  playerById: Map<string, Player>,
+): Player[] {
+  // Determine each active player's current court from the most recent round.
+  // If a player was on a bye last round, walk back to find their last active court.
+  const courtByPlayer = new Map<string, number>()
+
+  for (let roundIndex = tournament.rounds.length - 1; roundIndex >= 0; roundIndex -= 1) {
+    const round = tournament.rounds[roundIndex]
+
+    for (const match of round.matches) {
+      for (const playerId of [...match.teamAPlayerIds, ...match.teamBPlayerIds]) {
+        if (!courtByPlayer.has(playerId)) {
+          courtByPlayer.set(playerId, match.court)
+        }
+      }
+    }
+  }
+
+  // Fallback for players who were never active (all byes): assign by seed.
+  for (const player of tournament.players) {
+    if (!courtByPlayer.has(player.id)) {
+      courtByPlayer.set(player.id, Math.floor((player.seed - 1) / 4) + 1)
+    }
+  }
+
+  const standingsRankById = new Map(standings.map((s, i) => [s.playerId, i]))
+
+  const activePlayers = standings
+    .map((standing) => playerById.get(standing.playerId))
+    .filter((player): player is Player => player !== undefined)
+    .filter((player) => !byePlayerIds.includes(player.id))
+
+  // Build court groups from last-active-court assignments.
+  const courtGroups: Player[][] = Array.from({ length: tournament.courts }, () => [])
+
+  for (const player of activePlayers) {
+    const court = Math.min(courtByPlayer.get(player.id) ?? 1, tournament.courts) - 1
+    courtGroups[court].push(player)
+  }
+
+  // Sort each group by standings (best rank first).
+  for (const group of courtGroups) {
+    group.sort((a, b) => (standingsRankById.get(a.id) ?? 0) - (standingsRankById.get(b.id) ?? 0))
+  }
+
+  // Apply promotion / relegation at each court boundary:
+  // - The bottom player of the upper court is relegated to the lower court.
+  // - The top player of the lower court is promoted to the upper court.
+  for (let i = 0; i < courtGroups.length - 1; i += 1) {
+    const upperCourt = courtGroups[i]
+    const lowerCourt = courtGroups[i + 1]
+
+    if (upperCourt.length > 0 && lowerCourt.length > 0) {
+      const relegated = upperCourt.pop()!
+      const promoted = lowerCourt.shift()!
+      upperCourt.push(promoted)
+      lowerCourt.unshift(relegated)
+    }
+  }
+
+  // Re-sort within each group by standings after swaps, then flatten.
+  for (const group of courtGroups) {
+    group.sort((a, b) => (standingsRankById.get(a.id) ?? 0) - (standingsRankById.get(b.id) ?? 0))
+  }
+
+  return courtGroups.flat()
 }
 
 function selectByePlayerIds(tournament: Tournament, activeSlots: number, randomizeOpeningRound: boolean) {

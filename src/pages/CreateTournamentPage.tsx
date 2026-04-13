@@ -2,8 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { useTournamentStore } from '../state/TournamentStore'
+import type { MexicanoVariant } from '../domain/types'
 
-const TOTAL_STEPS = 4
+const BASE_STEPS = 4
 
 export function CreateTournamentPage() {
   const navigate = useNavigate()
@@ -13,8 +14,11 @@ export function CreateTournamentPage() {
   const [name, setName] = useState('')
   const [players, setPlayers] = useState<string[]>([])
   const [courts, setCourts] = useState(1)
+  const [mexicanoVariant, setMexicanoVariant] = useState<MexicanoVariant>('global-standings')
+  const [minRoundsBeforeReseeding, setMinRoundsBeforeReseeding] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
+  const totalSteps = mode === 'mexicano' ? BASE_STEPS + 1 : BASE_STEPS
   const maxCourts = Math.max(1, Math.floor(players.length / 4))
 
   useEffect(() => {
@@ -27,13 +31,14 @@ export function CreateTournamentPage() {
       case 2: return name.trim().length > 0
       case 3: return players.length >= 4
       case 4: return courts >= 1 && courts <= maxCourts
+      case 5: return true
       default: return false
     }
   }
 
   const handleNext = () => {
     setError(null)
-    if (step < TOTAL_STEPS) { setStep(step + 1); return }
+    if (step < totalSteps) { setStep(step + 1); return }
     handleSubmit()
   }
 
@@ -50,6 +55,8 @@ export function CreateTournamentPage() {
       mode,
       courts,
       playerNames: unique,
+      mexicanoVariant,
+      minRoundsBeforeReseeding,
     })
     navigate(`/tournament/${tournament.id}`)
   }
@@ -57,7 +64,7 @@ export function CreateTournamentPage() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-center gap-1.5 py-3">
-        {Array.from({ length: TOTAL_STEPS }, (_, i) => (
+        {Array.from({ length: totalSteps }, (_, i) => (
           <div
             className={`h-1 rounded-full transition-all duration-300 ${
               i + 1 === step ? 'w-6 bg-[var(--electric)]'
@@ -74,6 +81,14 @@ export function CreateTournamentPage() {
         {step === 2 && <StepName name={name} onChange={setName} />}
         {step === 3 && <StepPlayers players={players} onChange={setPlayers} />}
         {step === 4 && <StepCourts courts={courts} maxCourts={maxCourts} onChange={setCourts} playerCount={players.length} />}
+        {step === 5 && mode === 'mexicano' && (
+          <StepMexicanoOptions
+            variant={mexicanoVariant}
+            onVariantChange={setMexicanoVariant}
+            minRoundsBeforeReseeding={minRoundsBeforeReseeding}
+            onMinRoundsChange={setMinRoundsBeforeReseeding}
+          />
+        )}
       </div>
 
       {error && (
@@ -87,7 +102,7 @@ export function CreateTournamentPage() {
           <button className="btn-secondary" onClick={handleBack} type="button">← Back</button>
         ) : <div />}
         <button className="btn-primary" disabled={!canAdvance()} onClick={handleNext} type="button">
-          {step === TOTAL_STEPS ? '🎾 Start' : 'Next →'}
+          {step === totalSteps ? '🎾 Start' : 'Next →'}
         </button>
       </div>
     </div>
@@ -254,6 +269,98 @@ function StepCourts({ courts, maxCourts, onChange, playerCount }: { courts: numb
       <p className="text-xs text-[var(--text-muted)]">
         {courts} court{courts !== 1 ? 's' : ''} · {playerCount} players · {playerCount - courts * 4 > 0 ? `${playerCount - courts * 4} bye` : 'no byes'}
       </p>
+    </div>
+  )
+}
+
+const MEXICANO_VARIANTS: { value: MexicanoVariant; label: string; emoji: string; description: string }[] = [
+  {
+    value: 'global-standings',
+    label: 'Global standings',
+    emoji: '📊',
+    description: 'Players re-ranked globally each round. Best court is always the top 4 in the leaderboard.',
+  },
+  {
+    value: 'promotion-relegation',
+    label: 'Promo / Relegation',
+    emoji: '⬆️',
+    description: 'Only the border players between adjacent courts swap each round. Advancement feels earned.',
+  },
+  {
+    value: 'court-locked',
+    label: 'Court locked',
+    emoji: '🔒',
+    description: 'Players stay on their starting court. Only pairings within the court change each round.',
+  },
+]
+
+function StepMexicanoOptions({
+  variant,
+  onVariantChange,
+  minRoundsBeforeReseeding,
+  onMinRoundsChange,
+}: {
+  variant: MexicanoVariant
+  onVariantChange: (v: MexicanoVariant) => void
+  minRoundsBeforeReseeding: number
+  onMinRoundsChange: (v: number) => void
+}) {
+  return (
+    <div className="flex flex-1 flex-col overflow-y-auto px-4 gap-6 py-2">
+      <div>
+        <h1 className="display text-2xl text-[var(--text-muted)] mb-3">Pairing style</h1>
+        <div className="grid gap-2">
+          {MEXICANO_VARIANTS.map((opt) => (
+            <button
+              key={opt.value}
+              className={`rounded-[var(--radius-lg)] border-2 p-4 text-left transition-all active:scale-[0.98] ${
+                variant === opt.value
+                  ? 'border-[var(--electric)] bg-[var(--electric)]/6'
+                  : 'border-[var(--surface-3)] bg-[var(--surface-1)]'
+              }`}
+              onClick={() => onVariantChange(opt.value)}
+              type="button"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-lg">{opt.emoji}</span>
+                <span className="display text-sm">{opt.label}</span>
+              </div>
+              <p className="text-xs text-[var(--text-muted)] leading-relaxed">{opt.description}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {variant === 'global-standings' && (
+        <div>
+          <h2 className="display text-lg text-[var(--text-muted)] mb-1">Rounds before standings kick in</h2>
+          <p className="text-xs text-[var(--text-muted)] mb-3 leading-relaxed">
+            Keep players in their original seed order for this many rounds before switching to live standings. Useful when standings are volatile early on.
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              className="btn-secondary h-9 w-9 flex items-center justify-center text-lg"
+              disabled={minRoundsBeforeReseeding <= 0}
+              onClick={() => onMinRoundsChange(Math.max(0, minRoundsBeforeReseeding - 1))}
+              type="button"
+            >
+              −
+            </button>
+            <span className="score-num text-2xl w-8 text-center">{minRoundsBeforeReseeding}</span>
+            <button
+              className="btn-secondary h-9 w-9 flex items-center justify-center text-lg"
+              disabled={minRoundsBeforeReseeding >= 5}
+              onClick={() => onMinRoundsChange(Math.min(5, minRoundsBeforeReseeding + 1))}
+              type="button"
+            >
+              +
+            </button>
+            <span className="text-xs text-[var(--text-muted)]">
+              {minRoundsBeforeReseeding === 0 ? 'Off — use standings from round 2' : `rounds`}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

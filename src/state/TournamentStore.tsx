@@ -8,13 +8,15 @@ import {
   updateMatchScore,
 } from '../domain/engine'
 import { createLocalTournamentRepository, subscribeToTournamentStorage } from '../domain/repository'
-import type { Tournament, TournamentMode } from '../domain/types'
+import type { Tournament, TournamentMode, MexicanoVariant } from '../domain/types'
 
 interface CreateTournamentPayload {
   name: string
   mode: TournamentMode
   courts: number
   playerNames: string[]
+  mexicanoVariant?: MexicanoVariant
+  minRoundsBeforeReseeding?: number
 }
 
 interface TournamentStoreValue {

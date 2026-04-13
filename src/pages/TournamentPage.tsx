@@ -6,6 +6,15 @@ import { getRoundLabel, isRoundComplete } from '../domain/engine'
 import type { Match, Round, Tournament } from '../domain/types'
 import { useTournamentStore } from '../state/TournamentStore'
 
+const ROUND_SOURCE_LABELS: Record<Round['source'], string> = {
+  deterministic: 'Seeded',
+  randomized: 'Random draw',
+  standings: 'Standings',
+  seeded: 'Fixed seed',
+  'court-locked': 'Court locked',
+  'promotion-relegation': 'Promo/Relegate',
+}
+
 export function TournamentPage() {
   const { tournamentId } = useParams()
   const { tournaments, finishTournament, generateNextRound, reopenTournament, saveMatchScore } = useTournamentStore()
@@ -208,7 +217,7 @@ function RoundView({ round, tournament, onOpenScoring }: {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <h2 className="display text-lg">{getRoundLabel(round)}</h2>
-          <span className="label">{round.source}</span>
+          <span className="label">{ROUND_SOURCE_LABELS[round.source] ?? round.source}</span>
         </div>
         {complete && <span className="label text-[var(--court-teal)]">✓ Done</span>}
       </div>
