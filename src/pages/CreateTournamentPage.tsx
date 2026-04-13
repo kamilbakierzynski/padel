@@ -356,7 +356,9 @@ function StepMexicanoOptions({
               +
             </button>
             <span className="text-xs text-[var(--text-muted)]">
-              {minRoundsBeforeReseeding === 0 ? 'Off — use standings from round 2' : `rounds`}
+              {minRoundsBeforeReseeding === 0
+                ? 'Off — use standings from round 2'
+                : `seed order for rounds 1–${minRoundsBeforeReseeding}`}
             </span>
           </div>
         </div>
