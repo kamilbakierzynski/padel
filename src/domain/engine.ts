@@ -1,4 +1,5 @@
 import type { Match, Player, Round, Standing, Tournament, TournamentMode } from './types'
+import { buildAmericanoCycle, isFullAmericanoCyclePossible } from './americano'
 
 export const POINTS_PER_MATCH = 21
 
@@ -20,7 +21,10 @@ interface PlayerStats {
 interface MatchHistory {
   partners: Map<string, number>
   opponents: Map<string, number>
+  matches: Map<string, { count: number; lastRound: number }>
 }
+
+type AmericanoCost = [partners: number, matches: number, lastRound: number, opponents: number]
 
 interface CreateTournamentInput {
   name: string
@@ -76,10 +80,11 @@ export function appendNextRound(tournament: Tournament): Tournament {
     return tournament
   }
 
-  const nextRound =
-    tournament.mode === 'americano'
-      ? generateAmericanoRound(tournament)
-      : generateMexicanoRound(tournament)
+  if (tournament.mode === 'americano') {
+    return appendAmericanoRound(tournament)
+  }
+
+  const nextRound = generateMexicanoRound(tournament)
 
   if (!nextRound) {
     return tournament
@@ -341,8 +346,43 @@ function applyScore(
   }
 }
 
-function generateAmericanoRound(tournament: Tournament) {
+function appendAmericanoRound(tournament: Tournament): Tournament {
   const roundNumber = tournament.rounds.length + 1
+  if (isFullAmericanoCyclePossible(tournament.players.length)) {
+    let rotation = tournament.americanoRotation
+    let index = rotation ? roundNumber - rotation.startRound : -1
+
+    if (!rotation || index < 0 || index >= rotation.rounds.length) {
+      rotation = {
+        startRound: roundNumber,
+        rounds: buildAmericanoCycle(
+          tournament.players,
+          tournament.courts,
+          tournament.rounds,
+          createNumericSeed(`${tournament.seed}:${roundNumber}`),
+        ),
+      }
+      index = 0
+    }
+
+    const plannedRound = rotation.rounds[index]
+    const playersById = new Map(tournament.players.map((player) => [player.id, player]))
+    const blueprints: MatchBlueprint[] = plannedRound.matches.map((match) => ({
+      teamA: match.teamAPlayerIds.map((id) => playersById.get(id)!) as [Player, Player],
+      teamB: match.teamBPlayerIds.map((id) => playersById.get(id)!) as [Player, Player],
+    }))
+
+    return {
+      ...tournament,
+      americanoRotation: rotation,
+      rounds: [...tournament.rounds, createRound(roundNumber, plannedRound.byePlayerIds, blueprints, 'rotation')],
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  // An odd number of partnerships (4k+2 / 4k+3 players) cannot be split
+  // into doubles matches. Keep these existing formats available with
+  // balanced byes and history-based pairing instead of rejecting them.
   const activeSlots = tournament.courts * 4
   const byePlayerIds = selectByePlayerIds(tournament, activeSlots, false)
   const activePlayers = tournament.players.filter((player) => !byePlayerIds.includes(player.id))
@@ -352,12 +392,11 @@ function generateAmericanoRound(tournament: Tournament) {
       ? buildDeterministicFirstRound(activePlayers)
       : buildAmericanoBlueprints(activePlayers, tournament.rounds)
 
-  return createRound(
-    roundNumber,
-    byePlayerIds,
-    blueprints,
-    tournament.rounds.length === 0 ? 'deterministic' : 'standings',
-  )
+  return {
+    ...tournament,
+    rounds: [...tournament.rounds, createRound(roundNumber, byePlayerIds, blueprints, 'rotation')],
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function generateMexicanoRound(tournament: Tournament) {
@@ -467,7 +506,7 @@ function searchAmericanoMatches(players: Player[], history: MatchHistory): Match
   }
 
   const [anchor, ...others] = players
-  let bestCost = Number.POSITIVE_INFINITY
+  let bestCost: AmericanoCost = [Infinity, Infinity, Infinity, Infinity]
   let bestBlueprints: MatchBlueprint[] | null = null
   const candidates = combinations(others, 3)
     .map((group) => [anchor, ...group])
@@ -481,8 +520,9 @@ function searchAmericanoMatches(players: Player[], history: MatchHistory): Match
       }
     })
     .sort((left, right) => {
-      if (left.blueprint.cost !== right.blueprint.cost) {
-        return left.blueprint.cost - right.blueprint.cost
+      const difference = compareAmericanoCost(left.blueprint.cost, right.blueprint.cost)
+      if (difference !== 0) {
+        return difference
       }
 
       return left.signature.localeCompare(right.signature)
@@ -497,9 +537,9 @@ function searchAmericanoMatches(players: Player[], history: MatchHistory): Match
       continue
     }
 
-    const totalCost = candidate.blueprint.cost + scoreBlueprints(remainder, history)
+    const totalCost = addAmericanoCost(candidate.blueprint.cost, scoreBlueprints(remainder, history))
 
-    if (totalCost < bestCost) {
+    if (compareAmericanoCost(totalCost, bestCost) < 0) {
       bestCost = totalCost
       bestBlueprints = [candidate.blueprint.match, ...remainder]
     }
@@ -524,13 +564,13 @@ function findBestPairing(players: Player[], history: MatchHistory) {
     ],
   ]
 
-  let best: { cost: number; match: MatchBlueprint } | null = null
+  let best: { cost: AmericanoCost; match: MatchBlueprint } | null = null
 
   for (const [teamA, teamB] of pairings) {
     const match = { teamA, teamB } satisfies MatchBlueprint
-    const cost = scoreBlueprint(match, history)
+    const cost = scoreAmericanoBlueprint(match, history)
 
-    if (!best || cost < best.cost) {
+    if (!best || compareAmericanoCost(cost, best.cost) < 0) {
       best = { cost, match }
     }
   }
@@ -558,7 +598,40 @@ function scoreBlueprint(blueprint: MatchBlueprint, history: MatchHistory) {
 }
 
 function scoreBlueprints(blueprints: MatchBlueprint[], history: MatchHistory) {
-  return blueprints.reduce((total, blueprint) => total + scoreBlueprint(blueprint, history), 0)
+  return blueprints.reduce<AmericanoCost>(
+    (total, blueprint) => addAmericanoCost(total, scoreAmericanoBlueprint(blueprint, history)),
+    [0, 0, 0, 0],
+  )
+}
+
+function scoreAmericanoBlueprint(blueprint: MatchBlueprint, history: MatchHistory): AmericanoCost {
+  const a = blueprint.teamA.map((player) => player.id) as [string, string]
+  const b = blueprint.teamB.map((player) => player.id) as [string, string]
+  const previousMatch = history.matches.get(createMatchKey(a, b))
+
+  return [
+    getMatchHistoryCount(history.partners, ...a) + getMatchHistoryCount(history.partners, ...b),
+    previousMatch?.count ?? 0,
+    previousMatch?.lastRound ?? 0,
+    a.reduce((total, first) => total + b.reduce(
+      (sum, second) => sum + getMatchHistoryCount(history.opponents, first, second), 0,
+    ), 0),
+  ]
+}
+
+function compareAmericanoCost(left: AmericanoCost, right: AmericanoCost) {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index]
+  }
+  return 0
+}
+
+function addAmericanoCost(left: AmericanoCost, right: AmericanoCost): AmericanoCost {
+  return [left[0] + right[0], left[1] + right[1], left[2] + right[2], left[3] + right[3]]
+}
+
+function createMatchKey(teamA: [string, string], teamB: [string, string]) {
+  return [createPairKey(...teamA), createPairKey(...teamB)].sort().join('|')
 }
 
 function smoothMexicanoQuartets(players: Player[], history: MatchHistory) {
@@ -668,9 +741,12 @@ function selectByePlayerIds(tournament: Tournament, activeSlots: number, randomi
 function buildMatchHistory(rounds: Round[]): MatchHistory {
   const partners = new Map<string, number>()
   const opponents = new Map<string, number>()
+  const matches: MatchHistory['matches'] = new Map()
 
   for (const round of rounds) {
     for (const match of round.matches) {
+      const key = createMatchKey(match.teamAPlayerIds, match.teamBPlayerIds)
+      matches.set(key, { count: (matches.get(key)?.count ?? 0) + 1, lastRound: round.number })
       incrementPairCount(partners, match.teamAPlayerIds[0], match.teamAPlayerIds[1])
       incrementPairCount(partners, match.teamBPlayerIds[0], match.teamBPlayerIds[1])
       incrementPairCount(opponents, match.teamAPlayerIds[0], match.teamBPlayerIds[0])
@@ -680,7 +756,7 @@ function buildMatchHistory(rounds: Round[]): MatchHistory {
     }
   }
 
-  return { partners, opponents }
+  return { partners, opponents, matches }
 }
 
 function incrementPairCount(map: Map<string, number>, firstPlayerId: string, secondPlayerId: string) {

@@ -1,3 +1,5 @@
+import type { AmericanoRoundPlan } from './americano'
+
 export type TournamentMode = 'americano' | 'mexicano'
 export type TournamentStatus = 'active' | 'completed'
 
@@ -23,7 +25,7 @@ export interface Round {
   byePlayerIds: string[]
   matches: Match[]
   createdAt: string
-  source: 'deterministic' | 'randomized' | 'standings'
+  source: 'deterministic' | 'randomized' | 'standings' | 'rotation'
 }
 
 export interface Tournament {
@@ -37,6 +39,11 @@ export interface Tournament {
   createdAt: string
   updatedAt: string
   seed: number
+  /** Only the current rotation is planned; scores stay in rounds. Optional for older saves. */
+  americanoRotation?: {
+    startRound: number
+    rounds: AmericanoRoundPlan[]
+  }
 }
 
 export interface Standing {
