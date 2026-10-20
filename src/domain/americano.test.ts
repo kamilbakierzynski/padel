@@ -30,7 +30,7 @@ function asHistory(cycle: AmericanoRoundPlan[], offset = 0): Round[] {
   }))
 }
 
-function verifyCycle(cycle: AmericanoRoundPlan[], roster: Player[], courts: number): void {
+function verifyCycle(cycle: AmericanoRoundPlan[], roster: Player[], courts: number, repetitions = 1): void {
   const partnerships = new Map<string, number>()
   const byes = new Map(roster.map((player) => [player.id, 0]))
   for (const round of cycle) {
@@ -46,7 +46,7 @@ function verifyCycle(cycle: AmericanoRoundPlan[], roster: Player[], courts: numb
     }
   }
   expect(partnerships.size).toBe(roster.length * (roster.length - 1) / 2)
-  expect(new Set(partnerships.values())).toEqual(new Set([1]))
+  expect(new Set(partnerships.values())).toEqual(new Set([repetitions]))
   expect(new Set(byes.values()).size).toBe(1)
 }
 
@@ -62,6 +62,35 @@ function opponentCounts(cycle: AmericanoRoundPlan[]): Map<string, number> {
 }
 
 describe('complete Americano cycles', () => {
+  it.each([1, 2026, 12345])('finishes each 20-player rotation before repeating partnerships, seed %i', (seed) => {
+    const roster = players(20)
+    const plan = buildAmericanoCycle(roster, 4, [], seed)
+    verifyCycle(plan, roster, 4, 4)
+    expect(plan).toHaveLength(95)
+    const counts = new Map<string, number>()
+    for (const a of roster) for (const b of roster) if (a.id < b.id) counts.set(pairKey([a.id, b.id]), 0)
+    for (const round of plan) {
+      expect(round.matches).toHaveLength(4)
+      for (const match of round.matches) for (const team of [match.teamAPlayerIds, match.teamBPlayerIds]) {
+        const key = pairKey(team)
+        counts.set(key, counts.get(key)! + 1)
+      }
+      expect(Math.max(...counts.values()) - Math.min(...counts.values())).toBeLessThanOrEqual(1)
+    }
+    expect(new Set(opponentCounts(plan).values())).toEqual(new Set([8]))
+    expect(new Set(plan.flatMap((round) => round.matches.map(matchKey))).size).toBe(380)
+  })
+  it.each([[12, 16], [13, 19]])('mixes %i-player rotations only in their boundary round', (count, fullRounds) => {
+    const plan = buildAmericanoCycle(players(count), 2, [], 12345)
+    const pairs = (rounds: AmericanoRoundPlan[]) => rounds.flatMap((round) => round.matches.flatMap((match) =>
+      [pairKey(match.teamAPlayerIds), pairKey(match.teamBPlayerIds)]))
+    const first = pairs(plan.slice(0, fullRounds))
+    expect(new Set(first).size).toBe(first.length)
+    expect(new Set(pairs(plan.slice(0, fullRounds + 1))).size).toBe(count * (count - 1) / 2)
+    const last = pairs(plan.slice(fullRounds + 1))
+    expect(new Set(last).size).toBe(last.length)
+    expect(new Set(plan.flatMap((round) => round.matches.map(matchKey))).size).toBe(plan.length * 2)
+  })
   it.each([4, 5, 8, 9, 12, 13, 16, 20, 33])('uses every partnership exactly once for %i players', (count) => {
     const roster = players(count)
     const courts = Math.floor(count / 4)
@@ -70,14 +99,32 @@ describe('complete Americano cycles', () => {
     expect(cycle).toHaveLength(count % 2 === 0 ? count - 1 : count)
   })
 
-  it.each([[8, 1, 14], [9, 1, 18], [12, 2, 22], [13, 2, 26], [16, 3, 30]])(
-    'uses each partnership once and equal byes with %i players / %i courts', (count, courts, rounds) => {
+  it.each([[8, 1, 14, 1], [9, 1, 18, 1], [12, 2, 33, 2], [13, 2, 39, 2], [16, 1, 60, 1], [16, 3, 20, 1]])(
+    'fills courts with balanced complete blocks for %i players / %i courts', (count, courts, rounds, repetitions) => {
       const roster = players(count)
       const cycle = buildAmericanoCycle(roster, courts, [], 43)
-      verifyCycle(cycle, roster, courts)
+      verifyCycle(cycle, roster, courts, repetitions)
       expect(cycle).toHaveLength(rounds)
+      expect(cycle.every((round) => round.matches.length === courts)).toBe(true)
+      expect(new Set(opponentCounts(cycle).values())).toEqual(new Set([2 * repetitions]))
+      const appearances = new Map(roster.map((player) => [player.id, 0]))
+      for (const round of cycle) {
+        for (const match of round.matches) for (const id of [...match.teamAPlayerIds, ...match.teamBPlayerIds]) {
+          appearances.set(id, appearances.get(id)! + 1)
+        }
+        const counts = [...appearances.values()]
+        expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(2)
+      }
+      expect(new Set(appearances.values()).size).toBe(1)
     },
   )
+
+  it.each([4, 5, 8, 9, 12, 13, 16, 17, 20, 21, 24, 25, 29])('balances every opponent twice for %i players', (count) => {
+    const cycle = buildAmericanoCycle(players(count), Math.floor(count / 4), [], 12345)
+    verifyCycle(cycle, players(count), Math.floor(count / 4))
+    expect(opponentCounts(cycle).size).toBe(count * (count - 1) / 2)
+    expect(new Set(opponentCounts(cycle).values())).toEqual(new Set([2]))
+  })
 
   it.each([0, 1, 7, 42, 125, 4294967295])('balances eight-player opponents exactly for seed %i', (seed) => {
     const cycle = buildAmericanoCycle(players(8), 2, [], seed)
@@ -109,6 +156,7 @@ describe('complete Americano cycles', () => {
     for (let cycleIndex = 0; cycleIndex < 4; cycleIndex += 1) {
       const cycle = buildAmericanoCycle(roster, 2, history, cycleIndex + 20)
       verifyCycle(cycle, roster, 2)
+      expect(new Set(opponentCounts(cycle).values())).toEqual(new Set([2]))
       const earlier = new Set(history.flatMap((round) => round.matches.map(matchKey)))
       expect(cycle.flatMap((round) => round.matches).filter((match) => earlier.has(matchKey(match)))).toHaveLength(0)
       const changed = cycle.map((round) => ({
@@ -187,9 +235,56 @@ describe('complete Americano cycles', () => {
     expect(JSON.stringify({ roster, history })).toBe(original)
   })
 
-  it.each([0, 1, 2, 3, 6, 7, 10, 11, 4.5, NaN])('rejects unsupported player count %s', (count) => {
+  it.each([6, 7, 10, 11])('covers all partnerships with only one duplicate for %i players', (count) => {
+    const cycle = buildAmericanoCycle(players(count), 1, [], 12345)
+    const counts = new Map<string, number>()
+    for (const round of cycle) for (const match of round.matches) {
+      expect(new Set([...match.teamAPlayerIds, ...match.teamBPlayerIds]).size).toBe(4)
+      for (const team of [match.teamAPlayerIds, match.teamBPlayerIds]) {
+        const key = pairKey(team)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+    }
+    expect(counts.size).toBe(count * (count - 1) / 2)
+    expect([...counts.values()].filter((value) => value === 2)).toHaveLength(1)
+    expect([...counts.values()].every((value) => value === 1 || value === 2)).toBe(true)
+    expect(cycle).toHaveLength(Math.ceil(count * (count - 1) / 4))
+  })
+
+  it('keeps large incomplete fields playable when fixed-game packing is exhausted', () => {
+    const roster = players(18)
+    const plan = buildAmericanoCycle(roster, 4, [], 12345)
+    const partners = new Set<string>()
+    for (const round of plan) {
+      expect(round.matches).toHaveLength(4)
+      const active = round.matches.flatMap((match) => [...match.teamAPlayerIds, ...match.teamBPlayerIds])
+      expect(new Set(active).size).toBe(16)
+      expect(new Set([...active, ...round.byePlayerIds]).size).toBe(18)
+      for (const match of round.matches) for (const team of [match.teamAPlayerIds, match.teamBPlayerIds]) partners.add(pairKey(team))
+    }
+    expect(partners.size).toBe(18 * 17 / 2)
+  })
+
+  it('constructs complete chronological rotations for 32 players on seven courts', () => {
+    const roster = players(32)
+    const plan = buildAmericanoCycle(roster, 7, [], 2026)
+    verifyCycle(plan, roster, 7, 7)
+    expect(plan).toHaveLength(248)
+    const counts = new Map<string, number>()
+    for (const round of plan) {
+      expect(round.matches).toHaveLength(7)
+      for (const match of round.matches) for (const team of [match.teamAPlayerIds, match.teamBPlayerIds]) {
+        const key = pairKey(team)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+      const minimum = counts.size < 496 ? 0 : Math.min(...counts.values())
+      expect(Math.max(...counts.values()) - minimum).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it.each([0, 1, 2, 3, 4.5, NaN])('rejects unsupported player count %s', (count) => {
     expect(isFullAmericanoCyclePossible(count)).toBe(false)
-    if (Number.isInteger(count) && count >= 0) expect(() => buildAmericanoCycle(players(count), 1, [], 1)).toThrow(/full Americano cycle/)
+    if (Number.isInteger(count) && count >= 0) expect(() => buildAmericanoCycle(players(count), 1, [], 1)).toThrow(/at least four players/)
   })
 
   it.each([0, -1, 1.5, NaN])('rejects invalid court count %s', (courts) => {

@@ -39,8 +39,9 @@ export interface Tournament {
   createdAt: string
   updatedAt: string
   seed: number
-  /** Only the current rotation is planned; scores stay in rounds. Optional for older saves. */
+  /** Future full rounds; a block can contain multiple internal rotations. */
   americanoRotation?: {
+    version?: number
     startRound: number
     rounds: AmericanoRoundPlan[]
   }

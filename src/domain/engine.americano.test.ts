@@ -111,15 +111,71 @@ describe('Americano rotation integration', () => {
   it.each([6, 7, 10, 11])('keeps %i-player Americano available with valid matches and balanced byes', (count) => {
     const courts = Math.floor(count / 4)
     const result = playRounds(tournament(count, courts), count * 2)
+    const appearances = new Map(result.players.map((player) => [player.id, 0]))
     for (const round of result.rounds) {
       const active = round.matches.flatMap((match) => [...match.teamAPlayerIds, ...match.teamBPlayerIds])
       expect(new Set([...active, ...round.byePlayerIds]).size).toBe(count)
       expect(active.length + round.byePlayerIds.length).toBe(count)
       expect(round.matches).toHaveLength(courts)
+      for (const id of active) appearances.set(id, appearances.get(id)! + 1)
+      expect(Math.max(...appearances.values()) - Math.min(...appearances.values())).toBeLessThanOrEqual(1)
     }
     const byes = computeStandings(result).map((standing) => standing.byes)
     expect(Math.max(...byes) - Math.min(...byes)).toBeLessThanOrEqual(1)
-    expect(result.americanoRotation).toBeUndefined()
+    expect(result.americanoRotation?.version).toBe(2)
+  })
+
+  it.each([undefined, 1])('migrates cached version %s while preserving actual rounds and scores', (version) => {
+    const legacy = playRounds(tournament(12, 2), 3)
+    legacy.americanoRotation!.version = version
+    const savedRounds = JSON.parse(JSON.stringify(legacy.rounds)) as Round[]
+    const continued = appendNextRound(JSON.parse(JSON.stringify(legacy)) as Tournament)
+    expect(continued.rounds.slice(0, 3)).toEqual(savedRounds)
+    expect(continued.americanoRotation?.version).toBe(2)
+    expect(continued.americanoRotation?.startRound).toBe(4)
+    expect(continued.americanoRotation?.rounds).toHaveLength(33)
+    expect(continued.rounds.at(-1)?.matches).toHaveLength(2)
+  })
+
+  it('uses legacy nine-player bye history when starting a new rotation', () => {
+    const legacy = tournament(9, 2)
+    legacy.rounds = [{
+      id: 'legacy', number: 1, createdAt: '', source: 'deterministic', byePlayerIds: ['p1'],
+      matches: [
+        { id: 'a', court: 1, teamAPlayerIds: ['p2', 'p3'], teamBPlayerIds: ['p4', 'p5'], scoreA: 13, scoreB: 8, completedAt: '' },
+        { id: 'b', court: 2, teamAPlayerIds: ['p6', 'p7'], teamBPlayerIds: ['p8', 'p9'], scoreA: 13, scoreB: 8, completedAt: '' },
+      ],
+    }]
+    const continued = appendNextRound(legacy)
+    expect(continued.rounds[0]).toEqual(legacy.rounds[0])
+    expect(continued.rounds[1].byePlayerIds).not.toContain('p1')
+  })
+
+  it('avoids consecutive byes across nine-player rotation boundaries', () => {
+    const result = playRounds(tournament(9, 2), 28)
+    for (let index = 1; index < result.rounds.length; index += 1) {
+      expect(result.rounds[index].byePlayerIds[0]).not.toBe(result.rounds[index - 1].byePlayerIds[0])
+    }
+  })
+
+  it.each([1, 2026])('continues a legacy ten-player tournament without a packing failure (seed %i)', (seed) => {
+    const legacy = tournament(10, 2, seed)
+    const round = (number: number, byes: string[], matches: [string[], string[]][]): Round => ({
+      id: `legacy-${number}`, number, createdAt: '', source: 'deterministic', byePlayerIds: byes,
+      matches: matches.map(([a, b], index) => ({
+        id: `m${number}-${index}`, court: index + 1,
+        teamAPlayerIds: a as [string, string], teamBPlayerIds: b as [string, string],
+        scoreA: number === 1 ? 13 : 20, scoreB: number === 1 ? 8 : 1, completedAt: '',
+      })),
+    })
+    legacy.rounds = [
+      round(1, ['p1', 'p2'], [[['p3', 'p6'], ['p4', 'p5']], [['p7', 'p10'], ['p8', 'p9']]]),
+      round(2, ['p3', 'p4'], [[['p1', 'p10'], ['p5', 'p7']], [['p2', 'p9'], ['p6', 'p8']]]),
+    ]
+    const continued = playRounds(JSON.parse(JSON.stringify(legacy)) as Tournament, 24)
+    expect(continued.rounds.slice(0, 2)).toEqual(legacy.rounds)
+    expect(continued.rounds.every((item) => item.matches.length === 2)).toBe(true)
+    expect(continued.americanoRotation?.version).toBe(2)
   })
 
   it('continues a four-player tournament when whole-match repeats become unavoidable', () => {
