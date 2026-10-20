@@ -1,4 +1,5 @@
 import type { Match, Player, Round, Standing, Tournament, TournamentMode } from './types'
+import { AMERICANO_PLAN_VERSION, buildAmericanoCycle } from './americano'
 
 export const POINTS_PER_MATCH = 21
 
@@ -76,10 +77,11 @@ export function appendNextRound(tournament: Tournament): Tournament {
     return tournament
   }
 
-  const nextRound =
-    tournament.mode === 'americano'
-      ? generateAmericanoRound(tournament)
-      : generateMexicanoRound(tournament)
+  if (tournament.mode === 'americano') {
+    return appendAmericanoRound(tournament)
+  }
+
+  const nextRound = generateMexicanoRound(tournament)
 
   if (!nextRound) {
     return tournament
@@ -341,23 +343,35 @@ function applyScore(
   }
 }
 
-function generateAmericanoRound(tournament: Tournament) {
+function appendAmericanoRound(tournament: Tournament): Tournament {
   const roundNumber = tournament.rounds.length + 1
-  const activeSlots = tournament.courts * 4
-  const byePlayerIds = selectByePlayerIds(tournament, activeSlots, false)
-  const activePlayers = tournament.players.filter((player) => !byePlayerIds.includes(player.id))
+  let rotation = tournament.americanoRotation
+  let index = rotation ? roundNumber - rotation.startRound : -1
 
-  const blueprints =
-    tournament.rounds.length === 0
-      ? buildDeterministicFirstRound(activePlayers)
-      : buildAmericanoBlueprints(activePlayers, tournament.rounds)
+  // Replan only future matches from older scheduler versions. Actual rounds,
+  // scores and their complete history remain intact.
+  if (!rotation || rotation.version !== AMERICANO_PLAN_VERSION || index < 0 || index >= rotation.rounds.length) {
+    rotation = {
+      version: AMERICANO_PLAN_VERSION,
+      startRound: roundNumber,
+      rounds: buildAmericanoCycle(tournament.players, tournament.courts, tournament.rounds,
+        createNumericSeed(`${tournament.seed}:${roundNumber}`)),
+    }
+    index = 0
+  }
 
-  return createRound(
-    roundNumber,
-    byePlayerIds,
-    blueprints,
-    tournament.rounds.length === 0 ? 'deterministic' : 'standings',
-  )
+  const plannedRound = rotation.rounds[index]
+  const playersById = new Map(tournament.players.map((player) => [player.id, player]))
+  const blueprints: MatchBlueprint[] = plannedRound.matches.map((match) => ({
+    teamA: match.teamAPlayerIds.map((id) => playersById.get(id)!) as [Player, Player],
+    teamB: match.teamBPlayerIds.map((id) => playersById.get(id)!) as [Player, Player],
+  }))
+  return {
+    ...tournament,
+    americanoRotation: rotation,
+    rounds: [...tournament.rounds, createRound(roundNumber, plannedRound.byePlayerIds, blueprints, 'rotation')],
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function generateMexicanoRound(tournament: Tournament) {
@@ -432,116 +446,6 @@ function createMatch(court: number, blueprint: MatchBlueprint): Match {
   }
 }
 
-function buildDeterministicFirstRound(players: Player[]) {
-  const sortedPlayers = [...players].sort((left, right) => left.seed - right.seed)
-  const blueprints: MatchBlueprint[] = []
-
-  for (let index = 0; index < sortedPlayers.length; index += 4) {
-    const quartet = sortedPlayers.slice(index, index + 4)
-
-    if (quartet.length < 4) {
-      break
-    }
-
-    blueprints.push({
-      teamA: [quartet[0], quartet[3]],
-      teamB: [quartet[1], quartet[2]],
-    })
-  }
-
-  return blueprints
-}
-
-function buildAmericanoBlueprints(players: Player[], rounds: Round[]) {
-  const history = buildMatchHistory(rounds)
-  const sortedPlayers = [...players].sort((left, right) => left.seed - right.seed)
-
-  const best = searchAmericanoMatches(sortedPlayers, history)
-
-  return best ?? buildDeterministicFirstRound(sortedPlayers)
-}
-
-function searchAmericanoMatches(players: Player[], history: MatchHistory): MatchBlueprint[] | null {
-  if (players.length === 0) {
-    return []
-  }
-
-  const [anchor, ...others] = players
-  let bestCost = Number.POSITIVE_INFINITY
-  let bestBlueprints: MatchBlueprint[] | null = null
-  const candidates = combinations(others, 3)
-    .map((group) => [anchor, ...group])
-    .map((group) => {
-      const quartet = [...group].sort((left, right) => left.seed - right.seed)
-      const blueprint = findBestPairing(quartet, history)
-      return {
-        blueprint,
-        playerIds: new Set(quartet.map((player) => player.id)),
-        signature: quartet.map((player) => player.seed).join('-'),
-      }
-    })
-    .sort((left, right) => {
-      if (left.blueprint.cost !== right.blueprint.cost) {
-        return left.blueprint.cost - right.blueprint.cost
-      }
-
-      return left.signature.localeCompare(right.signature)
-    })
-    .slice(0, 8)
-
-  for (const candidate of candidates) {
-    const remainingPlayers = players.filter((player) => !candidate.playerIds.has(player.id))
-    const remainder = searchAmericanoMatches(remainingPlayers, history)
-
-    if (!remainder) {
-      continue
-    }
-
-    const totalCost = candidate.blueprint.cost + scoreBlueprints(remainder, history)
-
-    if (totalCost < bestCost) {
-      bestCost = totalCost
-      bestBlueprints = [candidate.blueprint.match, ...remainder]
-    }
-  }
-
-  return bestBlueprints
-}
-
-function findBestPairing(players: Player[], history: MatchHistory) {
-  const pairings: Array<[[Player, Player], [Player, Player]]> = [
-    [
-      [players[0], players[1]],
-      [players[2], players[3]],
-    ],
-    [
-      [players[0], players[2]],
-      [players[1], players[3]],
-    ],
-    [
-      [players[0], players[3]],
-      [players[1], players[2]],
-    ],
-  ]
-
-  let best: { cost: number; match: MatchBlueprint } | null = null
-
-  for (const [teamA, teamB] of pairings) {
-    const match = { teamA, teamB } satisfies MatchBlueprint
-    const cost = scoreBlueprint(match, history)
-
-    if (!best || cost < best.cost) {
-      best = { cost, match }
-    }
-  }
-
-  if (!best) {
-    throw new Error('No pairing found')
-  }
-
-  return best
-}
-
 function scoreBlueprint(blueprint: MatchBlueprint, history: MatchHistory) {
   const [a1, a2] = blueprint.teamA
   const [b1, b2] = blueprint.teamB
@@ -555,10 +459,6 @@ function scoreBlueprint(blueprint: MatchBlueprint, history: MatchHistory) {
   const spread = Math.abs(a1.seed + a2.seed - (b1.seed + b2.seed))
 
   return partnerRepeats * 100 + opponentRepeats * 8 + spread
-}
-
-function scoreBlueprints(blueprints: MatchBlueprint[], history: MatchHistory) {
-  return blueprints.reduce((total, blueprint) => total + scoreBlueprint(blueprint, history), 0)
 }
 
 function smoothMexicanoQuartets(players: Player[], history: MatchHistory) {
@@ -694,22 +594,6 @@ function getMatchHistoryCount(map: Map<string, number>, firstPlayerId: string, s
 
 function createPairKey(firstPlayerId: string, secondPlayerId: string) {
   return [firstPlayerId, secondPlayerId].sort().join('::')
-}
-
-function combinations<T>(items: T[], size: number): T[][] {
-  if (size === 0) {
-    return [[]]
-  }
-
-  if (items.length < size) {
-    return []
-  }
-
-  const [head, ...tail] = items
-  const withHead = combinations(tail, size - 1).map((combination) => [head, ...combination])
-  const withoutHead = combinations(tail, size)
-
-  return [...withHead, ...withoutHead]
 }
 
 function seededShuffle<T>(items: T[], seed: number) {

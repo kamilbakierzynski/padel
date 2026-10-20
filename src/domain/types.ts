@@ -1,3 +1,5 @@
+import type { AmericanoRoundPlan } from './americano'
+
 export type TournamentMode = 'americano' | 'mexicano'
 export type TournamentStatus = 'active' | 'completed'
 
@@ -23,7 +25,7 @@ export interface Round {
   byePlayerIds: string[]
   matches: Match[]
   createdAt: string
-  source: 'deterministic' | 'randomized' | 'standings'
+  source: 'deterministic' | 'randomized' | 'standings' | 'rotation'
 }
 
 export interface Tournament {
@@ -37,6 +39,12 @@ export interface Tournament {
   createdAt: string
   updatedAt: string
   seed: number
+  /** Future full rounds; a block can contain multiple internal rotations. */
+  americanoRotation?: {
+    version?: number
+    startRound: number
+    rounds: AmericanoRoundPlan[]
+  }
 }
 
 export interface Standing {

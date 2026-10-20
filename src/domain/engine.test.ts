@@ -11,7 +11,7 @@ import {
 } from './engine'
 
 describe('tournament engine', () => {
-  it('creates a deterministic Americano opening round', () => {
+  it('creates the opening round of an Americano rotation', () => {
     const tournament = createTournament({
       name: 'Club Night',
       mode: 'americano',
